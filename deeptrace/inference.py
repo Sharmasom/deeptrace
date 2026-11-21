@@ -57,26 +57,34 @@ class Detector:
             raise ValueError(f"Video is {dur:.0f} s long; the limit is {MAX_SECONDS} s.")
         return dict(fps=round(fps, 2), frames=n, width=w, height=h, duration_s=round(dur, 2))
 
-    def detect(self, frames):
+    def detect(self, frames, chunk=4):
+        """MTCNN in small chunks: a 32-frame batch builds an image pyramid that needs
+        >1 GB RAM on CPU (killed on Streamlit Cloud). Chunking gives identical boxes."""
+        import gc
         h, w = frames[0].shape[:2]
         s = min(1.0, DET_MAX_SIDE / max(h, w))
         small = [cv2.resize(f, (round(w * s), round(h * s))) for f in frames] if s < 1 else frames
-        boxes, probs, lms = self.mtcnn.detect(np.stack(small), landmarks=True)
         dets = []
-        for b, p, l in zip(boxes, probs, lms):
-            cur = []
-            if b is not None:
-                for bb, pp, ll in zip(b, p, l):
-                    if pp is not None and float(pp) >= DET_THRESH:
-                        cur.append((np.asarray(bb, dtype=np.float64) / s, np.asarray(ll, dtype=np.float64) / s, float(pp)))
-            dets.append(cur)
+        for i in range(0, len(small), chunk):
+            with torch.no_grad():
+                boxes, probs, lms = self.mtcnn.detect(np.stack(small[i:i + chunk]), landmarks=True)
+            for b, p, l in zip(boxes, probs, lms):
+                cur = []
+                if b is not None:
+                    for bb, pp, ll in zip(b, p, l):
+                        if pp is not None and float(pp) >= DET_THRESH:
+                            cur.append((np.asarray(bb, dtype=np.float64) / s, np.asarray(ll, dtype=np.float64) / s, float(pp)))
+                dets.append(cur)
+            gc.collect()
         return dets
 
-    def _features(self, crops):
-        x = torch.from_numpy(np.stack(crops)).permute(0, 3, 1, 2).unsqueeze(0).to(self.dev)    # 1,T,3,H,W
+    def _features(self, crops, chunk=8):
+        feats = []
         with torch.no_grad():
-            f = self.model.frame_features(x)                                                   # 1,T,D
-        return f
+            for i in range(0, len(crops), chunk):
+                x = torch.from_numpy(np.stack(crops[i:i + chunk])).permute(0, 3, 1, 2).unsqueeze(0).to(self.dev)
+                feats.append(self.model.frame_features(x))                                    # 1,t,D
+        return torch.cat(feats, 1)                                                             # 1,T,D
 
     def score_track(self, crops):
         f = self._features(crops)
