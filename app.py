@@ -37,6 +37,9 @@ info = load_info()
 st.title("🔍 DeepTrace")
 st.caption("Face-manipulation (deepfake) detection for videos · EfficientNet-B0 spatio-temporal detector "
            "trained on FaceForensics++ (c23) and evaluated across datasets on Celeb-DF v2")
+st.info("**Scope:** trained on face-swap and face-reenactment deepfakes (FaceForensics++: Deepfakes, Face2Face, "
+        "FaceSwap, NeuralTextures). Fully AI-generated videos (e.g. diffusion-based talking heads or text-to-video) are "
+        "outside its training scope and are often missed.", icon="ℹ️")
 st.warning("**Automated prediction, not proof.** The result is a statistical estimate from a model trained on "
            "two research datasets. It can be wrong, especially on video types, compression levels or manipulation "
            "methods it has not seen. Do not use it as the only basis for any decision about a person or a video.",
@@ -101,9 +104,10 @@ with c2:
         m1, m2, m3 = st.columns(3)
         m1.metric("Fake score", f"{res['fake_probability']:.3f}")
         m2.metric("Real score", f"{res['real_probability']:.3f}")
-        m3.metric("Confidence", f"{res['video_confidence']:.0%}")
-        st.caption(f"Verdict = FAKE when the fake score ≥ {res['threshold']:.3f}. Confidence grows with the distance "
-                   f"from that threshold; it is a ranking aid, not a guarantee. Faces found: {res['n_faces']} "
+        m3.metric("Margin from threshold", f"{res['video_confidence']:.0%}")
+        st.caption(f"Verdict = FAKE when the fake score ≥ {res['threshold']:.3f}. The margin only says how far the score is "
+                   f"from that threshold. It is not a reliability guarantee, and it can be high on video types the model "
+                   f"never saw. Faces found: {res['n_faces']} "
                    f"(verdict decided by face #{res['decided_by_face']}). Processed in "
                    f"{res['metadata']['processing_s']} s on {res['metadata']['device'].upper()}.")
 
