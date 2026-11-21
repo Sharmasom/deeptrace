@@ -26,6 +26,8 @@ from deeptrace.data.prep import sample_frames, track, fill, crop, NUM_FRAMES, DE
 from deeptrace.models.net import Net
 
 MAX_SECONDS, MIN_FRAMES = 600, 16
+KEY_STEP = 4            # detect faces on every 4th sampled frame (8 of 32); others use the nearest box
+MAX_FRAME_SIDE = 960    # frames are shrunk to this before cropping (faces still >= 224 px in typical video)
 
 
 class Detector:
@@ -57,17 +59,17 @@ class Detector:
             raise ValueError(f"Video is {dur:.0f} s long; the limit is {MAX_SECONDS} s.")
         return dict(fps=round(fps, 2), frames=n, width=w, height=h, duration_s=round(dur, 2))
 
-    def detect(self, frames, chunk=4):
-        """MTCNN in small chunks: a 32-frame batch builds an image pyramid that needs
-        >1 GB RAM on CPU (killed on Streamlit Cloud). Chunking gives identical boxes."""
+    def detect(self, frames, chunk=1, max_side=480):
+        """Low-memory MTCNN (free CPU hosts have ~1 GB RAM): one frame at a time on a
+        downscaled copy. Returns one detection list per given frame."""
         import gc
         h, w = frames[0].shape[:2]
-        s = min(1.0, DET_MAX_SIDE / max(h, w))
-        small = [cv2.resize(f, (round(w * s), round(h * s))) for f in frames] if s < 1 else frames
+        s = min(1.0, max_side / max(h, w))
         dets = []
-        for i in range(0, len(small), chunk):
+        for i in range(0, len(frames), chunk):
+            small = [cv2.resize(f, (round(w * s), round(h * s))) if s < 1 else f for f in frames[i:i + chunk]]
             with torch.no_grad():
-                boxes, probs, lms = self.mtcnn.detect(np.stack(small[i:i + chunk]), landmarks=True)
+                boxes, probs, lms = self.mtcnn.detect(np.stack(small), landmarks=True)
             for b, p, l in zip(boxes, probs, lms):
                 cur = []
                 if b is not None:
@@ -75,7 +77,7 @@ class Detector:
                         if pp is not None and float(pp) >= DET_THRESH:
                             cur.append((np.asarray(bb, dtype=np.float64) / s, np.asarray(ll, dtype=np.float64) / s, float(pp)))
                 dets.append(cur)
-            gc.collect()
+            del small; gc.collect()
         return dets
 
     def _features(self, crops, chunk=8):
@@ -120,13 +122,19 @@ class Detector:
         meta = self.validate(path)
         progress(0.15, "Reading frames")
         frames, idxs, ts = sample_frames(path)
+        h0, w0 = frames[0].shape[:2] if frames else (0, 0)
+        if frames and max(h0, w0) > MAX_FRAME_SIDE:              # cap memory: 32 x 1080p RGB ~ 200 MB
+            r = MAX_FRAME_SIDE / max(h0, w0)
+            frames = [cv2.resize(f, (round(w0 * r), round(h0 * r)), interpolation=cv2.INTER_AREA) for f in frames]
         if len(frames) < MIN_FRAMES:
             raise ValueError("Too few frames could be decoded from this video.")
         while len(frames) < NUM_FRAMES:
             frames.append(frames[-1]); idxs.append(idxs[-1]); ts.append(ts[-1])
         progress(0.35, "Finding faces")
-        dets = self.detect(frames)
-        tracks = track(dets, NUM_FRAMES)
+        key = list(range(0, NUM_FRAMES, KEY_STEP))                # faces detected on key frames only
+        kdets = self.detect([frames[i] for i in key])
+        ktracks = track(kdets, len(key))
+        tracks = [{key[t]: v for t, v in tr.items()} for tr in ktracks]   # back to 32-frame indices
         if not tracks:
             raise ValueError("No face was found in the sampled frames. The detector needs a reasonably visible, frontal face.")
         progress(0.55, "Scoring faces")
@@ -135,9 +143,10 @@ class Detector:
             seq, filled = fill(tr, NUM_FRAMES)
             crops = [crop(fr, box, lm)[0] for fr, (box, lm) in zip(frames, seq)]
             p_video, p_frames = self.score_track(crops)
-            faces.append(dict(face=k, fake_probability=float(p_video), detected_frames=len(tr), crops=crops,
+            faces.append(dict(face=k, fake_probability=float(p_video), detected_frames=len(tr) * KEY_STEP, crops=crops,
                               frame_scores=None if p_frames is None else [float(v) for v in p_frames],
                               box_first=[float(v) for v in seq[0][0]]))
+        del frames
         top = max(faces, key=lambda f: f["fake_probability"])
         progress(0.75, "Building heatmaps")
         cams = {}
