@@ -1,0 +1,12 @@
+{
+  "name": "robust_ffpp_s0",
+  "head": "mean",
+  "freq": false,
+  "train_on": "FaceForensics++ c23 (4 methods)",
+  "threshold": 0.45057088136672974,
+  "test_auc": {
+    "FF++ test (same dataset)": 0.9605739795918367,
+    "Celeb-DF strict (unseen dataset)": 0.8811376146788991,
+    "Celeb-DF official (unseen dataset)": 0.8441341705221415
+  }
+}

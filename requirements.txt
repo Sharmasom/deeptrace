@@ -1,0 +1,10 @@
+# CPU-only PyTorch, pinned to the versions facenet-pytorch 2.6.0 requires (same MTCNN code as training)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.2.2+cpu
+torchvision==0.17.2+cpu
+facenet-pytorch==2.6.0
+numpy<2
+pillow<10.3
+opencv-python-headless==4.10.0.84
+pandas==2.2.3
+streamlit==1.39.0
