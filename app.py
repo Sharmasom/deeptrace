@@ -17,7 +17,8 @@ WEIGHTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "weights")
 @st.cache_resource(show_spinner="Loading the model (first visit only)...")
 def get_detector():
     import torch
-    torch.set_num_threads(max(1, os.cpu_count() or 1))
+    torch.set_num_threads(1)          # free tier: ~1 GB RAM, keep memory low
+    import cv2; cv2.setNumThreads(1)
     from deeptrace.inference import Detector
     return Detector(WEIGHTS, device="cpu")
 
